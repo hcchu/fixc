@@ -66,11 +66,26 @@ func Heartbeat(hb time.Duration) <-chan string {
 	c := make(chan string)
 	go func() {
 		for i := 0; ; i++ {
-			c <- fmt.Sprintf("8=%s|35=0|49=|56=|34=|52=|", BeginString)
-			time.Sleep(hb)
+			if i == 0 {
+				time.Sleep(time.Second)
+			} else {
+				c <- fmt.Sprintf("8=%s|35=0|49=|56=|34=|52=|", BeginString)
+				time.Sleep(hb)
+			}
 		}
 	}()
 	return c
+}
+
+func RandomID(s string) (l string) {
+	if strings.Contains(s, "$RANDOM") {
+		rand.Seed(time.Now().UnixNano())
+		r := rand.Intn(1000000000)
+		l = strings.Replace(s, "$RANDOM", strconv.Itoa(r), -1)
+		return l
+	} else {
+		return s
+	}
 }
 
 func Remote(conn net.Conn) <-chan string {
@@ -133,6 +148,12 @@ func Scenario(f *os.File, intercom chan string) <-chan string {
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
 			line := scanner.Text()
+			// add tag 34 if missing
+			if strings.Contains(line, "8=FIX") {
+				if strings.Contains(line, "34=") != true {
+					line += "|34=|"
+				}
+			}
 			switch {
 			case strings.HasPrefix(line, "8=FIX"):
 				if strings.Contains(line, "$RANDOM") {
@@ -142,9 +163,16 @@ func Scenario(f *os.File, intercom chan string) <-chan string {
 				} else {
 					c <- line
 				}
+			case strings.HasPrefix(line, "repeat "):
+				count, err := strconv.Atoi(strings.Fields(line)[1])
+				ckErr(err)
+				for i := 0; i <= count; i++ {
+					c <- RandomID(strings.Fields(line)[2])
+				}
 			case strings.HasPrefix(line, "sleep "):
 				sleep, err := time.ParseDuration(strings.Fields(line)[1])
 				ckErr(err)
+				time.Sleep(time.Nanosecond * 1000000)
 				Log("sleeping for "+sleep.String(), "-")
 				time.Sleep(sleep)
 			case strings.HasPrefix(line, "exit"):
@@ -152,6 +180,7 @@ func Scenario(f *os.File, intercom chan string) <-chan string {
 				os.Exit(0)
 			case strings.HasPrefix(line, "expect "):
 				expect := strings.Fields(line)[1]
+				time.Sleep(time.Nanosecond * 1000000)
 				Log("expecting "+expect, "-")
 				intercom <- "1"
 				msg := <-intercom
